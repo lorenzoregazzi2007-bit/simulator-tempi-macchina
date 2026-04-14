@@ -1,388 +1,438 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { calculateMachineTimes } from './utils/calculator';
 import './index.css';
 
-function App() {
-  const [history, setHistory] = useState([]);
+/* ── ICONE SVG INLINE ─────────────────────────────── */
+const IconCalc = () => (
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="10" x2="16" y2="10"/><line x1="8" y1="14" x2="12" y2="14"/>
+  </svg>
+);
+const IconResults = () => (
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>
+  </svg>
+);
+const IconHistory = () => (
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+  </svg>
+);
+const IconDownload = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+  </svg>
+);
+const IconPlus = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+    <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+  </svg>
+);
+const IconSearch = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+  </svg>
+);
+const IconTrash = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>
+  </svg>
+);
+
+/* ── HELPERS ─────────────────────────────────────── */
+function fmtTime(dateVal) {
+  return new Date(dateVal).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+function fmtDateTime(dateVal) {
+  return new Date(dateVal).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+function fmtDuration(secs) {
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = Math.floor(secs % 60);
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+/* ── COMPONENTE PRINCIPALE ────────────────────────── */
+export default function App() {
+  const [activeTab, setActiveTab] = useState('form');   // 'form' | 'results' | 'history'
+  const [history, setHistory]     = useState([]);
   const [activeCalc, setActiveCalc] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
 
-  // Form State
+  /* Form state con valori di default sensati */
   const [formData, setFormData] = useState({
     startTime: new Date().toISOString().slice(0, 16),
     stepTimeSeconds: 10,
     numRounds: 2,
     totalUnits: 100,
-    extraSteps: 0
+    extraSteps: 0,
   });
-
   const [exceptions, setExceptions] = useState([]);
 
-  // Load history from localStorage
+  /* ── PERSISTENZA LOCALSTORAGE ─────────────────── */
+  // Carico history all'avvio
   useEffect(() => {
-    const saved = localStorage.getItem('calcHistory');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        setHistory(parsed);
-      } catch (e) {
-        console.error("Error parsing history from localstorage", e);
+    try {
+      const raw = localStorage.getItem('machineCalcHistory_v2');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setHistory(parsed);
+          // Ripristina automaticamente l'ultimo calcolo
+          setActiveCalc(parsed[0]);
+        }
       }
+    } catch (err) {
+      console.warn('LocalStorage read error:', err);
     }
   }, []);
 
-  // Save history to localStorage
+  // Salvo history ad ogni modifica
   useEffect(() => {
-    localStorage.setItem('calcHistory', JSON.stringify(history));
+    try {
+      localStorage.setItem('machineCalcHistory_v2', JSON.stringify(history));
+    } catch (err) {
+      console.warn('LocalStorage write error:', err);
+    }
   }, [history]);
 
-  const handleChange = (e) => {
+  /* ── HANDLERS FORM ────────────────────────────── */
+  const handleChange = useCallback((e) => {
     const { name, value } = e.target;
-    setFormData(prev => ({
-      ...prev,
-      [name]: value
-    }));
-  };
+    setFormData(prev => ({ ...prev, [name]: value }));
+  }, []);
 
-  const handleCalculate = (e) => {
+  const addException = useCallback(() => {
+    setExceptions(prev => [...prev, { pieceId: '', rounds: '' }]);
+  }, []);
+
+  const removeException = useCallback((idx) => {
+    setExceptions(prev => prev.filter((_, i) => i !== idx));
+  }, []);
+
+  const updateException = useCallback((idx, field, value) => {
+    setExceptions(prev => {
+      const next = [...prev];
+      next[idx] = { ...next[idx], [field]: value };
+      return next;
+    });
+  }, []);
+
+  /* ── CALCOLO ──────────────────────────────────── */
+  const handleCalculate = useCallback((e) => {
     e.preventDefault();
-    
-    // Perform calculation
+
     const calcData = calculateMachineTimes({
       startTime: formData.startTime,
-      stepTimeSeconds: formData.stepTimeSeconds,
-      numRounds: formData.numRounds,
-      totalUnits: formData.totalUnits,
-      extraStepsPerUnit: formData.extraSteps,
-      exceptions: exceptions
+      stepTimeSeconds: Number(formData.stepTimeSeconds),
+      numRounds: Number(formData.numRounds),
+      totalUnits: Number(formData.totalUnits),
+      extraStepsPerUnit: Number(formData.extraSteps),
+      exceptions: exceptions.filter(ex => ex.pieceId && ex.rounds),
     });
 
     const newCalc = {
       id: Date.now().toString(),
       dateCreated: new Date().toISOString(),
       params: { ...formData, exceptions: [...exceptions] },
-      ...calcData
+      ...calcData,
     };
 
-    setHistory(prev => [newCalc, ...prev]);
+    setHistory(prev => [newCalc, ...prev].slice(0, 50)); // max 50 in cronologia
     setActiveCalc(newCalc);
-  };
+    setActiveTab('results'); // vai ai risultati subito
+  }, [formData, exceptions]);
 
-  const deleteHistoryItem = (e, id) => {
+  /* ── CRONOLOGIA ───────────────────────────────── */
+  const loadCalc = useCallback((item) => {
+    setActiveCalc(item);
+    setActiveTab('results');
+  }, []);
+
+  const deleteCalc = useCallback((e, id) => {
     e.stopPropagation();
     setHistory(prev => prev.filter(item => item.id !== id));
-    if (activeCalc?.id === id) {
+    if (activeCalc?.id === id) setActiveCalc(null);
+  }, [activeCalc]);
+
+  const clearHistory = useCallback(() => {
+    if (window.confirm('Eliminare tutta la cronologia?')) {
+      setHistory([]);
       setActiveCalc(null);
     }
-  };
+  }, []);
 
-  const exportCSV = () => {
+  /* ── ESPORTAZIONE CSV ─────────────────────────── */
+  const exportCSV = useCallback(() => {
     if (!activeCalc) return;
-    
-    // Generate CSV string
-    const headers = ["ID Unità", "Lotto", "Giri Fatti", "Ingresso", "Uscita", "Tempo in Macchina (s)"];
-    
-    const rows = activeCalc.results.map(row => [
-      row.id,
-      row.batchId,
-      row.actualRounds || activeCalc.params.numRounds,
-      new Date(row.entryTime).toLocaleString(),
-      new Date(row.exitTime).toLocaleString(),
-      row.processingTimeSeconds
+    const headers = ['Pezzo', 'Lotto', 'Giri', 'Ingresso', 'Uscita', 'Tempo (s)'];
+    const rows = activeCalc.results.map(r => [
+      r.id, r.batchId,
+      r.actualRounds ?? activeCalc.params.numRounds,
+      new Date(r.entryTime).toLocaleString('it-IT'),
+      new Date(r.exitTime).toLocaleString('it-IT'),
+      r.processingTimeSeconds,
     ]);
-    
-    const csvContent = "data:text/csv;charset=utf-8," 
-      + headers.join(",") + "\n"
-      + rows.map(e => e.join(",")).join("\n");
-      
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `calcolo_${activeCalc.id}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
+    const csv = [headers, ...rows].map(r => r.join(',')).join('\n');
+    const a = document.createElement('a');
+    a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+    a.download = `calcolo_${activeCalc.id}.csv`;
+    a.click();
+  }, [activeCalc]);
 
-  // Filter results for active calc based on search
-  const filteredResults = activeCalc?.results.filter(r => 
-    r.id.toString().includes(searchTerm) || 
+  /* ── RISULTATI FILTRATI ───────────────────────── */
+  const filteredResults = activeCalc?.results.filter(r =>
+    !searchTerm ||
+    r.id.toString().includes(searchTerm) ||
     r.batchId.toString().includes(searchTerm)
-  );
+  ) ?? [];
 
+  /* ── JSX ──────────────────────────────────────── */
   return (
-    <div className="app-container">
-      {/* Sidebar for History */}
-      <aside className="sidebar">
+    <>
+      {/* HEADER */}
+      <header className="app-header">
+        <div className="app-header-logo">⚙️</div>
         <div>
-          <h2>Cronologia</h2>
-          <p style={{ fontSize: '0.875rem' }}>I tuoi calcoli recenti</p>
+          <div className="app-header-title">Simulatore Tempi Macchina</div>
+          <div className="app-header-subtitle">Calcolo produzione industriale</div>
         </div>
-        
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          {history.length === 0 ? (
-            <p style={{ fontSize: '0.875rem', textAlign: 'center', marginTop: '20px' }}>
-              Nessun calcolo salvato
-            </p>
-          ) : (
-            history.map(item => (
-              <div 
-                key={item.id} 
-                className={`history-item ${activeCalc?.id === item.id ? 'active' : ''}`}
-                onClick={() => setActiveCalc(item)}
-              >
-                <div className="history-header">
-                  <div className="history-title">
-                    {item.params.totalUnits} pz - {item.params.stepTimeSeconds}s/step
-                  </div>
-                  <button 
-                    className="btn-icon history-delete btn-danger"
-                    onClick={(e) => deleteHistoryItem(e, item.id)}
-                    title="Elimina"
-                  >
-                    ✕
-                  </button>
-                </div>
-                <div className="history-date">
-                  {new Date(item.dateCreated).toLocaleString()}
-                </div>
-                <div className="history-stats mt-2">
-                  <span className="badge badge-blue">{item.params.numRounds} Giri</span>
-                  {item.params.extraSteps > 0 && (
-                    <span className="badge badge-green">+{item.params.extraSteps} Extra</span>
-                  )}
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </aside>
+      </header>
 
-      {/* Main Content */}
-      <main className="main-content">
-        <h1>Simulatore Tempi Macchina</h1>
-        
-        <div className="card" style={{ marginBottom: '32px' }}>
+      {/* BODY */}
+      <div className="app-body">
+
+        {/* ── PANNELLO FORM ─────────────────────── */}
+        <div className={`panel${activeTab === 'form' ? ' active' : ''} sidebar-panel`}>
           <form onSubmit={handleCalculate}>
-            <div className="form-row">
+
+            <div className="card">
+              <div className="card-title">⏱ Avvio e Pezzi</div>
               <div className="form-group">
-                <label>Data / Ora Avvio</label>
-                <input 
-                  type="datetime-local" 
-                  name="startTime" 
-                  value={formData.startTime}
-                  onChange={handleChange}
-                  required
-                />
+                <label>Data e ora avvio macchina</label>
+                <input type="datetime-local" name="startTime" value={formData.startTime} onChange={handleChange} required />
               </div>
-              <div className="form-group">
-                <label>Pezzi Totali (Quantità)</label>
-                <input 
-                  type="number" 
-                  name="totalUnits" 
-                  min="1"
-                  value={formData.totalUnits}
-                  onChange={handleChange}
-                  required 
-                />
+              <div className="form-grid">
+                <div className="form-group">
+                  <label>Pezzi totali</label>
+                  <input type="number" name="totalUnits" min="1" value={formData.totalUnits} onChange={handleChange} required />
+                </div>
+                <div className="form-group">
+                  <label>Secondi / step</label>
+                  <input type="number" name="stepTimeSeconds" min="1" value={formData.stepTimeSeconds} onChange={handleChange} required />
+                </div>
+                <div className="form-group">
+                  <label>Giri di default</label>
+                  <input type="number" name="numRounds" min="1" value={formData.numRounds} onChange={handleChange} required />
+                </div>
+                <div className="form-group">
+                  <label>Step extra (opz.)</label>
+                  <input type="number" name="extraSteps" min="0" value={formData.extraSteps} onChange={handleChange} />
+                  <span className="input-hint">Fermano la coda</span>
+                </div>
               </div>
             </div>
 
-            <div className="form-row mt-4">
-              <div className="form-group">
-                <label>Tempo singolo step (Secondi)</label>
-                <input 
-                  type="number" 
-                  name="stepTimeSeconds" 
-                  min="1"
-                  value={formData.stepTimeSeconds}
-                  onChange={handleChange}
-                  required 
-                />
-              </div>
-              <div className="form-group">
-                <label>Numero di Giri (A lotto di 8)</label>
-                <input 
-                  type="number" 
-                  name="numRounds" 
-                  min="1"
-                  value={formData.numRounds}
-                  onChange={handleChange}
-                  required 
-                />
-              </div>
-            </div>
-
-            <div className="form-row mt-4">
-               <div className="form-group">
-                <label>Step Extra a metà ciclo (Opzionale)</label>
-                <input 
-                  type="number" 
-                  name="extraSteps" 
-                  min="0"
-                  value={formData.extraSteps}
-                  onChange={handleChange}
-                />
-                <p style={{fontSize: '0.75rem', marginTop: '4px'}}>Fermano la coda. 0 se non presenti.</p>
-              </div>
-            </div>
-
-            <div className="form-group mt-4 p-4" style={{ backgroundColor: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid var(--border)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                <label style={{ margin: 0, fontWeight: '600' }}>Eccezioni Giri Specifici</label>
-                <button type="button" className="btn btn-outline" style={{ padding: '6px 12px', fontSize: '0.875rem' }} onClick={() => setExceptions(prev => [...prev, { pieceId: '', rounds: '' }])}>
-                  + Aggiungi Eccezione
+            <div className="card mt-3">
+              <div className="exceptions-header">
+                <div className="card-title" style={{marginBottom: 0}}>🔄 Eccezioni Giri</div>
+                <button type="button" className="btn btn-outline btn-sm" onClick={addException}>
+                  <IconPlus /> Aggiungi
                 </button>
               </div>
-              
+
               {exceptions.length === 0 ? (
-                <p style={{ fontSize: '0.875rem', marginBottom: '8px', color: 'var(--text-muted)' }}>Nessuna eccezione. Tutti i pezzi faranno i giri di base.</p>
+                <p className="text-muted mt-2">Tutti i pezzi fanno {formData.numRounds} giri. Aggiungi un'eccezione per cambiarne uno.</p>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {exceptions.map((exc, index) => (
-                    <div key={index} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                      <input 
-                        type="number" 
-                        placeholder="N° Pezzo (es. 45)" 
-                        value={exc.pieceId}
-                        min="1"
-                        onChange={e => {
-                          const newEx = [...exceptions];
-                          newEx[index].pieceId = e.target.value;
-                          setExceptions(newEx);
-                        }}
-                        style={{ flex: 1, padding: '8px' }}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '10px' }}>
+                  {exceptions.map((ex, idx) => (
+                    <div className="exception-row" key={idx}>
+                      <input
+                        type="number" placeholder="N° pezzo" min="1"
+                        value={ex.pieceId}
+                        onChange={e => updateException(idx, 'pieceId', e.target.value)}
                         required
                       />
-                      <input 
-                        type="number" 
-                        placeholder="N° Giri" 
-                        value={exc.rounds}
-                        min="1"
-                        onChange={e => {
-                          const newEx = [...exceptions];
-                          newEx[index].rounds = e.target.value;
-                          setExceptions(newEx);
-                        }}
-                        style={{ flex: 1, padding: '8px' }}
+                      <input
+                        type="number" placeholder="Giri" min="1"
+                        value={ex.rounds}
+                        onChange={e => updateException(idx, 'rounds', e.target.value)}
                         required
                       />
-                      <button 
-                        type="button" 
-                        className="btn-icon btn-danger"
-                        onClick={() => setExceptions(prev => prev.filter((_, i) => i !== index))}
-                      >✕</button>
+                      <button type="button" className="btn btn-ghost btn-danger" onClick={() => removeException(idx)} title="Rimuovi">✕</button>
                     </div>
                   ))}
                 </div>
               )}
             </div>
 
-            <div className="mt-6" style={{ display: 'flex', justifyContent: 'flex-end' }}>
-              <button type="submit" className="btn btn-primary" style={{ width: '100%', maxWidth: '300px' }}>
-                Calcola Tempi
+            <div className="mt-3">
+              <button type="submit" className="btn btn-primary">
+                ⚡ Calcola Tempi di Uscita
               </button>
             </div>
+
           </form>
         </div>
 
-        {activeCalc && (
-          <div className="results-section">
-            <div className="flex justify-between items-center mb-4">
-              <h2>Risultati Calcolo</h2>
-              <button className="btn btn-outline" onClick={exportCSV}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{marginRight: '8px'}}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                Esporta CSV
-              </button>
+        {/* ── PANNELLO RISULTATI ─────────────────── */}
+        <div className={`panel${activeTab === 'results' ? ' active' : ''} main-panel`}>
+          {!activeCalc ? (
+            <div className="empty-state">
+              <div className="empty-state-icon">📊</div>
+              <p>Nessun calcolo eseguito.<br />Vai su <strong>Calcola</strong> per iniziare.</p>
             </div>
-
-            <div className="summary-grid">
-              <div className="stat-card">
-                <span className="stat-label">Primo Pezzo in Macchina</span>
-                <span className="stat-value" style={{fontSize: '1.25rem'}}>
-                  {new Date(activeCalc.summary.firstEntry).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'})}
-                </span>
-              </div>
-              <div className="stat-card">
-                <span className="stat-label">Ultimo Pezzo Finito</span>
-                <span className="stat-value" style={{fontSize: '1.25rem', color: 'var(--success)'}}>
-                  {new Date(activeCalc.summary.lastExit).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'})}
-                </span>
-              </div>
-              <div className="stat-card">
-                <span className="stat-label">Durata Totale Produzione</span>
-                <span className="stat-value">
-                  {Math.floor(activeCalc.summary.totalDurationSeconds / 3600)}h {Math.floor((activeCalc.summary.totalDurationSeconds % 3600) / 60)}m
-                </span>
-              </div>
-              <div className="stat-card">
-                <span className="stat-label">Velocità Lotti (8pz)</span>
-                <span className="stat-value" style={{fontSize: '1.25rem'}}>
-                  {Math.floor(activeCalc.summary.totalDurationSeconds / Math.ceil(activeCalc.summary.totalUnits / 8))}s / lotto
-                </span>
-              </div>
-            </div>
-
-            <div className="card">
-              <div className="search-box">
-                <svg className="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-                <input 
-                  type="text" 
-                  placeholder="Cerca per ID pezzo o Lotto..." 
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                />
+          ) : (
+            <>
+              <div className="results-header">
+                <div className="section-title">Risultati</div>
+                <button className="btn btn-outline btn-sm" onClick={exportCSV}>
+                  <IconDownload /> CSV
+                </button>
               </div>
 
-              <div className="table-container">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Pezzo N°</th>
-                      <th>Lotto</th>
-                      <th>Giri</th>
-                      <th>Ingresso Macchina</th>
-                      <th>Uscita Macchina</th>
-                      <th>Tempo Netto</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredResults?.map((row) => (
-                      <tr key={row.id}>
-                        <td>
-                          <span style={{ fontWeight: '600' }}>#{row.id}</span>
-                        </td>
-                        <td>
-                          <span className="badge badge-blue">Lotto {row.batchId}</span>
-                        </td>
-                        <td>
-                           <span className={String(row.actualRounds) !== String(activeCalc.params.numRounds) ? "badge badge-green" : ""}>
-                             {row.actualRounds || activeCalc.params.numRounds}
-                           </span>
-                        </td>
-                        <td>{new Date(row.entryTime).toLocaleString()}</td>
-                        <td style={{ color: 'var(--success)', fontWeight: '500' }}>
-                          {new Date(row.exitTime).toLocaleString()}
-                        </td>
-                        <td>{row.processingTimeSeconds}s</td>
-                      </tr>
-                    ))}
-                    {filteredResults?.length === 0 && (
+              <div className="stats-grid">
+                <div className="stat-card">
+                  <div className="stat-label">🟢 Primo pezzo esce</div>
+                  <div className="stat-value">{fmtTime(activeCalc.results[0]?.exitTime)}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-label">🏁 Ultimo pezzo esce</div>
+                  <div className="stat-value green">{fmtTime(activeCalc.summary.lastExit)}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-label">⏳ Durata totale</div>
+                  <div className="stat-value">{fmtDuration(activeCalc.summary.totalDurationSeconds)}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-label">📦 Lotti da 8 pz</div>
+                  <div className="stat-value">{Math.ceil(activeCalc.summary.totalUnits / 8)}</div>
+                </div>
+              </div>
+
+              <div className="card">
+                <div className="search-box">
+                  <span className="search-icon"><IconSearch /></span>
+                  <input
+                    type="search"
+                    placeholder="Cerca pezzo o lotto..."
+                    value={searchTerm}
+                    onChange={e => setSearchTerm(e.target.value)}
+                  />
+                </div>
+                <div className="table-wrapper">
+                  <table>
+                    <thead>
                       <tr>
-                        <td colSpan="5" style={{ textAlign: 'center', padding: '32px' }}>
-                          Nessun pezzo trovato con questa ricerca.
-                        </td>
+                        <th>#</th>
+                        <th>Lotto</th>
+                        <th>Giri</th>
+                        <th>Ingresso</th>
+                        <th>Uscita</th>
+                        <th>Tempo</th>
                       </tr>
-                    )}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {filteredResults.map(row => {
+                        const isException = String(row.actualRounds) !== String(activeCalc.params.numRounds);
+                        return (
+                          <tr key={row.id}>
+                            <td><strong>#{row.id}</strong></td>
+                            <td><span className="badge badge-blue">{row.batchId}</span></td>
+                            <td>
+                              {isException
+                                ? <span className="badge badge-green">{row.actualRounds}</span>
+                                : row.actualRounds ?? activeCalc.params.numRounds
+                              }
+                            </td>
+                            <td>{fmtDateTime(row.entryTime)}</td>
+                            <td style={{ color: 'var(--success-light)', fontWeight: 600 }}>{fmtDateTime(row.exitTime)}</td>
+                            <td>{fmtDuration(row.processingTimeSeconds)}</td>
+                          </tr>
+                        );
+                      })}
+                      {filteredResults.length === 0 && (
+                        <tr><td colSpan="6" style={{ textAlign: 'center', padding: '24px', color: 'var(--text-dim)' }}>Nessun pezzo trovato</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-            </div>
+            </>
+          )}
+        </div>
+
+        {/* ── PANNELLO CRONOLOGIA ────────────────── */}
+        <div className={`panel${activeTab === 'history' ? ' active' : ''} history-panel`}>
+          <div className="results-header">
+            <div className="section-title">📋 Cronologia</div>
+            {history.length > 0 && (
+              <button className="btn btn-ghost btn-danger btn-sm" onClick={clearHistory} title="Svuota tutto">
+                <IconTrash />
+              </button>
+            )}
           </div>
-        )}
-      </main>
-    </div>
+
+          {history.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-state-icon">🕐</div>
+              <p>Nessun calcolo salvato.<br />Esegui il primo calcolo per vederlo qui.</p>
+            </div>
+          ) : (
+            <div className="history-list">
+              {history.map(item => (
+                <div
+                  key={item.id}
+                  className={`history-item${activeCalc?.id === item.id ? ' active-item' : ''}`}
+                  onClick={() => loadCalc(item)}
+                >
+                  <div className="hi-top">
+                    <div className="hi-title">{Number(item.params.totalUnits).toLocaleString()} pz · {item.params.stepTimeSeconds}s/step</div>
+                    <button className="btn btn-ghost btn-danger history-delete" onClick={e => deleteCalc(e, item.id)} title="Elimina">✕</button>
+                  </div>
+                  <div className="hi-date">
+                    {new Date(item.dateCreated).toLocaleString('it-IT', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                  </div>
+                  <div className="hi-badges">
+                    <span className="badge badge-blue">{item.params.numRounds} giri</span>
+                    {Number(item.params.extraSteps) > 0 && (
+                      <span className="badge badge-green">+{item.params.extraSteps} step extra</span>
+                    )}
+                    {item.params.exceptions?.length > 0 && (
+                      <span className="badge badge-green">{item.params.exceptions.length} eccez.</span>
+                    )}
+                    {item.summary && (
+                      <span className="badge" style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-secondary)' }}>
+                        {fmtDuration(item.summary.totalDurationSeconds)}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+      </div>
+
+      {/* TAB BAR (visibile solo mobile) */}
+      <nav className="tab-bar">
+        <button className={`tab-item${activeTab === 'form' ? ' active' : ''}`} onClick={() => setActiveTab('form')}>
+          <IconCalc />
+          Calcola
+        </button>
+        <button className={`tab-item${activeTab === 'results' ? ' active' : ''}`} onClick={() => setActiveTab('results')}>
+          <IconResults />
+          Risultati
+        </button>
+        <button className={`tab-item${activeTab === 'history' ? ' active' : ''}`} onClick={() => setActiveTab('history')}>
+          <IconHistory />
+          Cronologia
+        </button>
+      </nav>
+    </>
   );
 }
-
-export default App;
