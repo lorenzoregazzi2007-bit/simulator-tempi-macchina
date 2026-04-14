@@ -11,10 +11,12 @@ function App() {
   const [formData, setFormData] = useState({
     startTime: new Date().toISOString().slice(0, 16),
     stepTimeSeconds: 10,
-    numRounds: 1,
+    numRounds: 2,
     totalUnits: 100,
     extraSteps: 0
   });
+
+  const [exceptions, setExceptions] = useState([]);
 
   // Load history from localStorage
   useEffect(() => {
@@ -51,13 +53,14 @@ function App() {
       stepTimeSeconds: formData.stepTimeSeconds,
       numRounds: formData.numRounds,
       totalUnits: formData.totalUnits,
-      extraStepsPerUnit: formData.extraSteps
+      extraStepsPerUnit: formData.extraSteps,
+      exceptions: exceptions
     });
 
     const newCalc = {
       id: Date.now().toString(),
       dateCreated: new Date().toISOString(),
-      params: { ...formData },
+      params: { ...formData, exceptions: [...exceptions] },
       ...calcData
     };
 
@@ -77,11 +80,12 @@ function App() {
     if (!activeCalc) return;
     
     // Generate CSV string
-    const headers = ["ID Unità", "Lotto", "Ingresso", "Uscita", "Tempo in Macchina (s)"];
+    const headers = ["ID Unità", "Lotto", "Giri Fatti", "Ingresso", "Uscita", "Tempo in Macchina (s)"];
     
     const rows = activeCalc.results.map(row => [
       row.id,
       row.batchId,
+      row.actualRounds || activeCalc.params.numRounds,
       new Date(row.entryTime).toLocaleString(),
       new Date(row.exitTime).toLocaleString(),
       row.processingTimeSeconds
@@ -223,6 +227,57 @@ function App() {
               </div>
             </div>
 
+            <div className="form-group mt-4 p-4" style={{ backgroundColor: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                <label style={{ margin: 0, fontWeight: '600' }}>Eccezioni Giri Specifici</label>
+                <button type="button" className="btn btn-outline" style={{ padding: '6px 12px', fontSize: '0.875rem' }} onClick={() => setExceptions(prev => [...prev, { pieceId: '', rounds: '' }])}>
+                  + Aggiungi Eccezione
+                </button>
+              </div>
+              
+              {exceptions.length === 0 ? (
+                <p style={{ fontSize: '0.875rem', marginBottom: '8px', color: 'var(--text-muted)' }}>Nessuna eccezione. Tutti i pezzi faranno i giri di base.</p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {exceptions.map((exc, index) => (
+                    <div key={index} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <input 
+                        type="number" 
+                        placeholder="N° Pezzo (es. 45)" 
+                        value={exc.pieceId}
+                        min="1"
+                        onChange={e => {
+                          const newEx = [...exceptions];
+                          newEx[index].pieceId = e.target.value;
+                          setExceptions(newEx);
+                        }}
+                        style={{ flex: 1, padding: '8px' }}
+                        required
+                      />
+                      <input 
+                        type="number" 
+                        placeholder="N° Giri" 
+                        value={exc.rounds}
+                        min="1"
+                        onChange={e => {
+                          const newEx = [...exceptions];
+                          newEx[index].rounds = e.target.value;
+                          setExceptions(newEx);
+                        }}
+                        style={{ flex: 1, padding: '8px' }}
+                        required
+                      />
+                      <button 
+                        type="button" 
+                        className="btn-icon btn-danger"
+                        onClick={() => setExceptions(prev => prev.filter((_, i) => i !== index))}
+                      >✕</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <div className="mt-6" style={{ display: 'flex', justifyContent: 'flex-end' }}>
               <button type="submit" className="btn btn-primary" style={{ width: '100%', maxWidth: '300px' }}>
                 Calcola Tempi
@@ -285,6 +340,7 @@ function App() {
                     <tr>
                       <th>Pezzo N°</th>
                       <th>Lotto</th>
+                      <th>Giri</th>
                       <th>Ingresso Macchina</th>
                       <th>Uscita Macchina</th>
                       <th>Tempo Netto</th>
@@ -298,6 +354,11 @@ function App() {
                         </td>
                         <td>
                           <span className="badge badge-blue">Lotto {row.batchId}</span>
+                        </td>
+                        <td>
+                           <span className={String(row.actualRounds) !== String(activeCalc.params.numRounds) ? "badge badge-green" : ""}>
+                             {row.actualRounds || activeCalc.params.numRounds}
+                           </span>
                         </td>
                         <td>{new Date(row.entryTime).toLocaleString()}</td>
                         <td style={{ color: 'var(--success)', fontWeight: '500' }}>
