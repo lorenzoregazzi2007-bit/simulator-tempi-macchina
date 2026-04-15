@@ -26,34 +26,47 @@ export function calculateMachineTimes({
   numRounds: baseRounds, // This is basic setting
   totalUnits,
   extraStepsPerUnit = 0,
-  exceptions = [] // Array of { pieceId: Number, rounds: Number }
+  exceptions = [], // Array of { pieceId: Number, rounds: Number }
+  importedPieces = null // Array of { id: String/Number, rounds: Number }
 }) {
   const results = [];
   const startMs = new Date(startTime).getTime();
   
   const S = Number(stepTimeSeconds);
   const E = Number(extraStepsPerUnit);
-  const total = Number(totalUnits);
   
-  // Convert exceptions to a Map for fast lookup
-  const roundsMap = new Map();
-  exceptions.forEach(ex => {
-    roundsMap.set(Number(ex.pieceId), Number(ex.rounds));
-  });
+  // Build the list of pieces to process
+  let piecesList = [];
+  if (importedPieces && importedPieces.length > 0) {
+    piecesList = importedPieces.map(p => ({
+      id: p.id,
+      rounds: Number(p.rounds)
+    }));
+  } else {
+    const total = Number(totalUnits);
+    const roundsMap = new Map();
+    exceptions.forEach(ex => {
+      roundsMap.set(Number(ex.pieceId), Number(ex.rounds));
+    });
+    for (let i = 1; i <= total; i++) {
+        piecesList.push({
+            id: i,
+            rounds: roundsMap.has(i) ? roundsMap.get(i) : Number(baseRounds)
+        });
+    }
+  }
 
+  const numBatches = Math.ceil(piecesList.length / 8);
   let currentBatchStartSec = 0;
-  const numBatches = Math.ceil(total / 8);
 
   for (let b = 0; b < numBatches; b++) {
-    const piecesInBatch = [];
-    const numPiecesThisBatch = Math.min(8, total - b * 8);
+    const numPiecesThisBatch = Math.min(8, piecesList.length - b * 8);
 
     // 1. Gather R_p for all pieces in this batch
-    const roundsArray = [];
+    const batchPieces = [];
     for (let p = 1; p <= numPiecesThisBatch; p++) {
-      const unitNumber = b * 8 + p;
-      const R_p = roundsMap.has(unitNumber) ? roundsMap.get(unitNumber) : Number(baseRounds);
-      roundsArray.push(R_p);
+      const globalIndex = b * 8 + (p - 1);
+      batchPieces.push(piecesList[globalIndex]);
     }
 
     // 2. Calculate Exit Times and find Max Batch Duration
@@ -61,14 +74,14 @@ export function calculateMachineTimes({
 
     for (let p_index = 0; p_index < numPiecesThisBatch; p_index++) {
       const p = p_index + 1; // 1-indexed position in batch
-      const unitNumber = b * 8 + p;
-      const R_p = roundsArray[p_index];
+      const currentPiece = batchPieces[p_index];
+      const R_p = currentPiece.rounds;
 
       // Calculate total delays from extra steps in this batch
       let totalExtraStepsTakenValidForP = 0;
       for (let j_index = 0; j_index < numPiecesThisBatch; j_index++) {
         const j = j_index + 1;
-        const R_j = roundsArray[j_index];
+        const R_j = batchPieces[j_index].rounds;
         
         // Piece j delays piecewise p if j finishes its extra steps BEFORE p exits.
         // If R_j < R_p, j finishes an entire round earlier, so it happens before.
@@ -85,7 +98,7 @@ export function calculateMachineTimes({
       const entrySec = currentBatchStartSec + entryOffsetSec;
 
       results.push({
-        id: unitNumber,
+        id: currentPiece.id,
         entryTime: new Date(startMs + entrySec * 1000),
         exitTime: new Date(startMs + exitSec * 1000),
         processingTimeSeconds: exitSec - entrySec,
@@ -109,7 +122,7 @@ export function calculateMachineTimes({
     summary: {
       firstEntry: results[0]?.entryTime || null,
       lastExit: results.length > 0 ? results[results.length - 1].exitTime : null,
-      totalUnits: total,
+      totalUnits: piecesList.length,
       totalDurationSeconds: currentBatchStartSec // The maximum time offset from start
     }
   };

@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import * as XLSX from 'xlsx';
 import { calculateMachineTimes } from './utils/calculator';
 import './index.css';
 
@@ -23,6 +24,11 @@ const IconDownload = () => (
     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
   </svg>
 );
+const IconUpload = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+  </svg>
+);
 const IconPlus = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
     <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
@@ -41,12 +47,14 @@ const IconTrash = () => (
 
 /* ── HELPERS ─────────────────────────────────────── */
 function fmtTime(dateVal) {
+  if (!dateVal) return '--:--:--';
   return new Date(dateVal).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 function fmtDateTime(dateVal) {
   return new Date(dateVal).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 function fmtDuration(secs) {
+  if (!secs) return '0s';
   const h = Math.floor(secs / 3600);
   const m = Math.floor((secs % 3600) / 60);
   const s = Math.floor(secs % 60);
@@ -71,6 +79,11 @@ export default function App() {
     extraSteps: 0,
   });
   const [exceptions, setExceptions] = useState([]);
+
+  /* Stato per Excel import */
+  const [importedPieces, setImportedPieces] = useState(null);
+  const [importedFileName, setImportedFileName] = useState('');
+  const fileInputRef = useRef(null);
 
   /* ── PERSISTENZA LOCALSTORAGE ─────────────────── */
   // Carico history all'avvio
@@ -98,6 +111,77 @@ export default function App() {
       console.warn('LocalStorage write error:', err);
     }
   }, [history]);
+
+  /* ── UPLOAD EXCEL / CSV ───────────────────────── */
+  const handleFileUpload = useCallback((e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const data = new Uint8Array(evt.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const firstSheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[firstSheetName];
+        
+        // Converte in array di array per gestire intestazioni variabili
+        const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+        const pieces = [];
+        
+        rows.forEach(row => {
+          if (!row || row.length === 0) return;
+          
+          // ID pezzo: proviamo con l'ultima cella o penultima
+          let id = row[row.length - 1];
+          if (id === undefined || id === null || id === '') {
+            if (row.length > 1) {
+              id = row[row.length - 2]; 
+            } else {
+              return;
+            }
+          }
+          if (id === undefined || id === null || id === '') return;
+          
+          // Giri: troviamo il primo numero reale guardando da sinistra
+          let rounds = null;
+          for (let i = 0; i < row.length; i++) {
+            if (row[i] !== id) {
+              const val = parseFloat(row[i]);
+              if (!isNaN(val)) {
+                rounds = val;
+                break;
+              }
+            }
+          }
+          
+          // Aggiunge all'array di pezzi se non sono intestazioni testuali
+          if (rounds !== null && id.toString().trim() !== '' && !String(id).toLowerCase().includes('pilota')) {
+             pieces.push({ id: id.toString().trim(), rounds });
+          }
+        });
+
+        if (pieces.length > 0) {
+          setImportedPieces(pieces);
+          setImportedFileName(file.name);
+          // Niente alert, così è più fluido e si capisce dal badge
+        } else {
+          alert('Non è stato trovato nessun dato valido nel file. Assicurati che contenga i numeri di giri e i codici.');
+        }
+
+      } catch (err) {
+        console.error(err);
+        alert('Errore durante la lettura del file Excel/CSV.');
+      }
+    };
+    reader.readAsArrayBuffer(file);
+    e.target.value = '';
+  }, []);
+
+  const removeImportedData = useCallback(() => {
+    setImportedPieces(null);
+    setImportedFileName('');
+  }, []);
 
   /* ── HANDLERS FORM ────────────────────────────── */
   const handleChange = useCallback((e) => {
@@ -132,19 +216,25 @@ export default function App() {
       totalUnits: Number(formData.totalUnits),
       extraStepsPerUnit: Number(formData.extraSteps),
       exceptions: exceptions.filter(ex => ex.pieceId && ex.rounds),
+      importedPieces: importedPieces
     });
 
     const newCalc = {
       id: Date.now().toString(),
       dateCreated: new Date().toISOString(),
-      params: { ...formData, exceptions: [...exceptions] },
+      params: { 
+        ...formData, 
+        exceptions: [...exceptions], 
+        importedPieces: importedPieces ? true : false, 
+        totalUnits: calcData.summary.totalUnits 
+      },
       ...calcData,
     };
 
     setHistory(prev => [newCalc, ...prev].slice(0, 50)); // max 50 in cronologia
     setActiveCalc(newCalc);
     setActiveTab('results'); // vai ai risultati subito
-  }, [formData, exceptions]);
+  }, [formData, exceptions, importedPieces]);
 
   /* ── CRONOLOGIA ───────────────────────────────── */
   const loadCalc = useCallback((item) => {
@@ -170,24 +260,25 @@ export default function App() {
     if (!activeCalc) return;
     const headers = ['Pezzo', 'Lotto', 'Giri', 'Ingresso', 'Uscita', 'Tempo (s)'];
     const rows = activeCalc.results.map(r => [
-      r.id, r.batchId,
-      r.actualRounds ?? activeCalc.params.numRounds,
-      new Date(r.entryTime).toLocaleString('it-IT'),
-      new Date(r.exitTime).toLocaleString('it-IT'),
+      r.id, 
+      r.batchId,
+      r.actualRounds,
+      new Date(r.entryTime).toLocaleString('it-IT').replace(',', ''), // Remove internal commas for perfect CSV
+      new Date(r.exitTime).toLocaleString('it-IT').replace(',', ''),
       r.processingTimeSeconds,
     ]);
     const csv = [headers, ...rows].map(r => r.join(',')).join('\n');
     const a = document.createElement('a');
     a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
-    a.download = `calcolo_${activeCalc.id}.csv`;
+    a.download = `calcolo_macchina_${activeCalc.id}.csv`;
     a.click();
   }, [activeCalc]);
 
   /* ── RISULTATI FILTRATI ───────────────────────── */
   const filteredResults = activeCalc?.results.filter(r =>
     !searchTerm ||
-    r.id.toString().includes(searchTerm) ||
-    r.batchId.toString().includes(searchTerm)
+    String(r.id).includes(searchTerm) ||
+    String(r.batchId).includes(searchTerm)
   ) ?? [];
 
   /* ── JSX ──────────────────────────────────────── */
@@ -210,23 +301,42 @@ export default function App() {
           <form onSubmit={handleCalculate}>
 
             <div className="card">
-              <div className="card-title">⏱ Avvio e Pezzi</div>
+              <div className="card-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: importedPieces ? '15px' : '20px' }}>
+                <span>⏱ Avvio e Pezzi</span>
+                <div>
+                  <input type="file" accept=".xlsx, .xls, .csv" onChange={handleFileUpload} ref={fileInputRef} style={{ display: 'none' }} />
+                  <button type="button" className="btn btn-outline btn-sm" onClick={() => fileInputRef.current.click()} title="Carica da CSV o Excel">
+                    <IconUpload /> Carica Lista
+                  </button>
+                </div>
+              </div>
+
+              {importedPieces && (
+                <div style={{ backgroundColor: 'rgba(76, 175, 80, 0.1)', padding: '12px', borderRadius: '8px', marginBottom: '16px', border: '1px solid var(--success)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <strong style={{ color: 'var(--success)' }}>✅ Lista Caricata: </strong> {importedFileName}<br/>
+                    <small style={{ color: 'var(--text-dim)'}}>{importedPieces.length} pezzi configurati con i propri giri.</small>
+                  </div>
+                  <button type="button" className="btn btn-ghost btn-danger btn-sm" onClick={removeImportedData} title="Rimuovi file">✕</button>
+                </div>
+              )}
+
               <div className="form-group">
                 <label>Data e ora avvio macchina</label>
                 <input type="datetime-local" name="startTime" value={formData.startTime} onChange={handleChange} required />
               </div>
               <div className="form-grid">
-                <div className="form-group">
+                <div className="form-group" style={{ opacity: importedPieces ? 0.4 : 1, pointerEvents: importedPieces ? 'none' : 'auto' }}>
                   <label>Pezzi totali</label>
-                  <input type="number" name="totalUnits" min="1" value={formData.totalUnits} onChange={handleChange} required />
+                  <input type="number" name="totalUnits" min="1" value={formData.totalUnits} onChange={handleChange} required={!importedPieces} />
                 </div>
                 <div className="form-group">
                   <label>Secondi / step</label>
                   <input type="number" name="stepTimeSeconds" min="1" value={formData.stepTimeSeconds} onChange={handleChange} required />
                 </div>
-                <div className="form-group">
+                <div className="form-group" style={{ opacity: importedPieces ? 0.4 : 1, pointerEvents: importedPieces ? 'none' : 'auto' }}>
                   <label>Giri di default</label>
-                  <input type="number" name="numRounds" min="1" value={formData.numRounds} onChange={handleChange} required />
+                  <input type="number" name="numRounds" min="1" value={formData.numRounds} onChange={handleChange} required={!importedPieces} />
                 </div>
                 <div className="form-group">
                   <label>Step extra (opz.)</label>
@@ -236,7 +346,7 @@ export default function App() {
               </div>
             </div>
 
-            <div className="card mt-3">
+            <div className="card mt-3" style={{ opacity: importedPieces ? 0.4 : 1, pointerEvents: importedPieces ? 'none' : 'auto' }}>
               <div className="exceptions-header">
                 <div className="card-title" style={{marginBottom: 0}}>🔄 Eccezioni Giri</div>
                 <button type="button" className="btn btn-outline btn-sm" onClick={addException}>
@@ -254,13 +364,13 @@ export default function App() {
                         type="number" placeholder="N° pezzo" min="1"
                         value={ex.pieceId}
                         onChange={e => updateException(idx, 'pieceId', e.target.value)}
-                        required
+                        required={!importedPieces}
                       />
                       <input
                         type="number" placeholder="Giri" min="1"
                         value={ex.rounds}
                         onChange={e => updateException(idx, 'rounds', e.target.value)}
-                        required
+                        required={!importedPieces}
                       />
                       <button type="button" className="btn btn-ghost btn-danger" onClick={() => removeException(idx)} title="Rimuovi">✕</button>
                     </div>
@@ -327,7 +437,7 @@ export default function App() {
                   <table>
                     <thead>
                       <tr>
-                        <th>#</th>
+                        <th># Pezzo / Codice</th>
                         <th>Lotto</th>
                         <th>Giri</th>
                         <th>Ingresso</th>
@@ -336,16 +446,18 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredResults.map(row => {
-                        const isException = String(row.actualRounds) !== String(activeCalc.params.numRounds);
+                      {filteredResults.map((row, i) => {
+                        const isException = activeCalc.params.importedPieces 
+                           ? true // highlight visually just a bit
+                           : String(row.actualRounds) !== String(activeCalc.params.numRounds);
                         return (
-                          <tr key={row.id}>
-                            <td><strong>#{row.id}</strong></td>
+                          <tr key={i}>
+                            <td><strong>{String(row.id).startsWith('#') ? row.id : `#${row.id}`}</strong></td>
                             <td><span className="badge badge-blue">{row.batchId}</span></td>
                             <td>
-                              {isException
+                              {isException && !activeCalc.params.importedPieces
                                 ? <span className="badge badge-green">{row.actualRounds}</span>
-                                : row.actualRounds ?? activeCalc.params.numRounds
+                                : <span className="badge badge-green" style={{ background: activeCalc.params.importedPieces ? 'rgba(255,255,255,0.06)' : '' }}>{row.actualRounds}</span>
                               }
                             </td>
                             <td>{fmtDateTime(row.entryTime)}</td>
@@ -397,13 +509,22 @@ export default function App() {
                     {new Date(item.dateCreated).toLocaleString('it-IT', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
                   </div>
                   <div className="hi-badges">
-                    <span className="badge badge-blue">{item.params.numRounds} giri</span>
+                    
+                    {item.params.importedPieces ? (
+                        <span className="badge badge-green">Da Excel/CSV</span>
+                    ) : (
+                        <>
+                            <span className="badge badge-blue">{item.params.numRounds} giri</span>
+                            {item.params.exceptions?.length > 0 && (
+                            <span className="badge badge-green">{item.params.exceptions.length} eccez.</span>
+                            )}
+                        </>
+                    )}
+
                     {Number(item.params.extraSteps) > 0 && (
                       <span className="badge badge-green">+{item.params.extraSteps} step extra</span>
                     )}
-                    {item.params.exceptions?.length > 0 && (
-                      <span className="badge badge-green">{item.params.exceptions.length} eccez.</span>
-                    )}
+
                     {item.summary && (
                       <span className="badge" style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-secondary)' }}>
                         {fmtDuration(item.summary.totalDurationSeconds)}
