@@ -106,6 +106,35 @@ body {
   display: none;
 }
 
+/* Navigazione globale header */
+.top-nav {
+  display: flex;
+  gap: 8px;
+}
+
+.nav-btn {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.nav-btn:hover {
+  background: var(--surface-3);
+  color: var(--text-primary);
+}
+
+.nav-btn.active {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: var(--accent);
+  color: var(--accent-light);
+}
+
 /* Area contenuto con padding per header e tab bar */
 .app-body {
   padding-top: calc(var(--header-height) + 8px);
